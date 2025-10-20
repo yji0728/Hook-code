@@ -1,0 +1,37 @@
+# Compiled binaries
+*.exe
+*.dll
+*.obj
+*.o
+*.pdb
+*.ilk
+*.lib
+*.exp
+
+# Build directories
+/build/
+/bin/
+/obj/
+/out/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.filters
+*.vcxproj.user
+
+# JetBrains Rider
+.idea/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~
+
+# Windows specific
+Thumbs.db
+Desktop.ini
