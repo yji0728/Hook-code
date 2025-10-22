@@ -5,7 +5,7 @@
 ifeq ($(OS),Windows_NT)
     # Windows with MSVC
     CC = cl.exe
-    CFLAGS = /W3 /O2
+    CFLAGS = /W3 /O2 /I"src"
     LDFLAGS = /link /SUBSYSTEM:CONSOLE
     OUT_FLAG = /Fe:
     EXE_EXT = .exe
@@ -14,7 +14,7 @@ ifeq ($(OS),Windows_NT)
 else
     # Linux with MinGW cross-compiler
     CC = x86_64-w64-mingw32-gcc
-    CFLAGS = -O2 -Wall
+    CFLAGS = -O2 -Wall -Isrc
     LDFLAGS = 
     OUT_FLAG = -o 
     EXE_EXT = .exe
@@ -25,12 +25,15 @@ endif
 # Output directory
 BIN_DIR = bin
 
+# Common files
+SRC_COMMON = src/common/common.c
+
 # Source files
 SRC_01 = src/01_classic_dll_injection/injector.c
 SRC_02 = src/02_process_hollowing/hollowing.c
 SRC_03 = src/03_apc_injection/apc_injector.c
 SRC_04 = src/04_thread_hijacking/hijack_thread.c
-SRC_05 = src/05_reflective_dll_injection/reflective_loader.c
+SRC_05 = src/05_reflective_dll_injection/reflective_loader_fixed.c
 SRC_DLL = src/sample_dll/sample_dll.c
 
 # Target executables
@@ -56,48 +59,48 @@ $(BIN_DIR):
 
 # Build individual targets (MinGW style)
 ifeq ($(CC),x86_64-w64-mingw32-gcc)
-$(TARGET_01): $(SRC_01)
+$(TARGET_01): $(SRC_01) $(SRC_COMMON)
 	@echo [1/6] Building Classic DLL Injection...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_02): $(SRC_02)
+$(TARGET_02): $(SRC_02) $(SRC_COMMON)
 	@echo [2/6] Building Process Hollowing...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_03): $(SRC_03)
+$(TARGET_03): $(SRC_03) $(SRC_COMMON)
 	@echo [3/6] Building APC Injection...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_04): $(SRC_04)
+$(TARGET_04): $(SRC_04) $(SRC_COMMON)
 	@echo [4/6] Building Thread Hijacking...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_05): $(SRC_05)
+$(TARGET_05): $(SRC_05) $(SRC_COMMON)
 	@echo [5/6] Building Reflective DLL Injection...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
 $(TARGET_DLL): $(SRC_DLL)
 	@echo [6/6] Building Test Payload DLL...
 	$(CC) $(CFLAGS) -shared $(OUT_FLAG)$@ $< -luser32
 else
 # Build individual targets (MSVC style)
-$(TARGET_01): $(SRC_01)
+$(TARGET_01): $(SRC_01) $(SRC_COMMON)
 	@echo [1/6] Building Classic DLL Injection...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_02): $(SRC_02)
+$(TARGET_02): $(SRC_02) $(SRC_COMMON)
 	@echo [2/6] Building Process Hollowing...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_03): $(SRC_03)
+$(TARGET_03): $(SRC_03) $(SRC_COMMON)
 	@echo [3/6] Building APC Injection...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_04): $(SRC_04)
+$(TARGET_04): $(SRC_04) $(SRC_COMMON)
 	@echo [4/6] Building Thread Hijacking...
-	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $^ $(LDFLAGS)
 
-$(TARGET_05): $(SRC_05)
+$(TARGET_05): $(SRC_05) $(SRC_COMMON)
 	@echo [5/6] Building Reflective DLL Injection...
 	$(CC) $(CFLAGS) $(OUT_FLAG)$@ $< $(LDFLAGS)
 
